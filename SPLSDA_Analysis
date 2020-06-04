@@ -1,0 +1,259 @@
+
+library(mixOmics)
+####Separateing Diagnosis based on clinical characterisics
+
+names(dftrain)
+clinical_splsda<-dftrain[!is.na(dftrain$diagnosis1),]
+set.seed(123)
+pval_test_clin<-list()
+iter=0
+cov=c(110:129,131:147,149:159,161:171)
+optsample<-list()
+ncompsample<-list()
+keepsampleX<-list()
+test.keepX = ceiling( seq(1,ncol(clinical_splsda[,c(cov)]),length.out=20))
+clinical_splsda[,c(cov)]<-sapply(clinical_splsda[,c(cov)],as.character)
+clinical_splsda[,c(cov)]<-sapply(clinical_splsda[,c(cov)],as.numeric)
+for ( hosets in 1:10) {
+  nsamp<-sample(nrow(clinical_splsda),size=ceiling(nrow(clinical_splsda)*0.8),replace=FALSE)
+  dfopt<-clinical_splsda[nsamp,]
+  dfho<-clinical_splsda[-nsamp,]
+  Y<-as.factor(as.matrix(dfopt$diagnosis1))
+  X<-as.matrix(dfopt[,c(cov)])
+  tunsplsda<-tune.splsda(X, Y,
+                         ncomp = 5,
+                         test.keepX=test.keepX,
+                         validation = "Mfold",
+                         folds = 5,nrepeat=50,cpus=4)
+  
+  
+  res <-mixOmics:: splsda(X, Y, ncomp = tunsplsda$choice.ncomp$ncomp, 
+                          keepX = tunsplsda$choice.keepX[1:tunsplsda$choice.ncomp$ncomp]
+                          ,scale=T)
+  optsample[[hosets]]<-nsamp
+  ncompsample[[hosets]]<-tunsplsda$choice.ncomp$ncomp
+  keepsampleX[[hosets]]<-tunsplsda$choice.keepX
+  list<-list()
+  Yho<-as.factor(as.matrix(dfho$diagnosis1))
+  X<-as.matrix(dfho[,c(cov)])
+  x<-auroc(res,X,Yho,plot=F)
+  truer2<-unlist(x)[length(unlist(x))-1]
+  
+  permr2test<-c()
+  for (nperm in 1: 10000) {
+    perm<-sample(nrow(dfopt),size=nrow(dfopt),replace=FALSE)
+    Y<-as.factor(as.matrix(dfopt$diagnosis1))
+    Yperm<-Y[perm]
+    X<-as.matrix(dfopt[,c(cov)])
+    res <-mixOmics:: splsda(X, Yperm, ncomp = tunsplsda$choice.ncomp$ncomp, 
+                            keepX = tunsplsda$choice.keepX[1:tunsplsda$choice.ncomp$ncomp]
+                            ,scale=T)
+    Yho<-as.factor(as.matrix(dfho$diagnosis1))
+    X<-as.matrix(dfho[,c(cov)])
+    x<-auroc(res,X,Yho,plot=F)
+    permr2test[nperm]<-unlist(x)[length(unlist(x))-1]
+    
+  }
+  
+  pval_test_this <-
+    length(which (permr2test >= 
+                    truer2)) / 10000
+  pval_test_clin[[hosets]]<-pval_test_this
+  
+  
+}
+
+#find the best p-value
+bestpval=which(unlist(pval_test_clin)==min(unlist(pval_test_clin)))
+
+
+#rerun the analysis for the sparsity parameters with best p-value
+dfopt<-dftrain[optsample[[bestpval]],]
+dfho<-dftrain[-optsample[[bestpval]],]
+
+levels(dfopt$diagnosis1)<-c("MDD","BD")
+Y<-as.factor(as.matrix(dfopt$diagnosis1))
+X<-as.matrix(dfopt[,cov])
+
+res <-mixOmics:: splsda(X, Y, ncomp = ncompsample[[bestpval]], 
+                        keepX = keepsampleX[[bestpval]][1: ncompsample[[bestpval]]])
+x<-auroc(res,X,Y,plot=F)
+auroc(res,X,Y,roc.comp=c(1,2),title="ROC Curve")
+
+
+levels(dfho$diagnosis1)<-c("MDD","BD")
+Yho<-as.factor(as.matrix(dfho$diagnosis1))
+X<-as.matrix(dfho[,cov])
+x<-auroc(res,X,Yho,plot=F)
+unlist(x)[length(unlist(x))-1]
+auroc(res,X,Yho,roc.comp=1,title="ROC Curve")
+
+#weights
+View(round(res$loadings$X,3))
+
+
+levels(dfopt$diagnosis1)<-c("MDD","BD")
+
+#Individual star plot
+plotIndiv(res,col=c("blue","red"),centroid=T,star=T,X.label="First Component",Y.label="Second Component",title="Individual Scores on First and Second Components",
+          legend=T,group=dfopt$diagnosis1, pch = as.numeric(factor(dfopt$diagnosis1)),
+          pch.levels =dfopt$diagnosis1,size.xlabel=20,size.ylabel=20,size.legend=20,size.legend.title=20,size.title=25,legend.title = "Diagnosis")
+
+
+
+
+
+####Separateing Diagnosis based on imaging characterisics
+
+set.seed(123)
+pval_test_imag<-list()
+iter=0
+cov=c(5:88)
+optsample<-list()
+ncompsample<-list()
+keepsampleX<-list()
+names(imaging_splsda)
+imaging_splsda<-dftrain[!is.na(dftrain$diagnosis1),]
+test.keepX = ceiling( seq(1,ncol(imaging_splsda[,cov]),length.out=20))
+imaging_splsda[,cov]<-sapply(imaging_splsda[,cov],as.character)
+imaging_splsda[,cov]<-sapply(imaging_splsda[,cov],as.numeric)
+for ( hosets in 1:10) {
+  nsamp<-sample(nrow(imaging_splsda),size=ceiling(nrow(imaging_splsda)*0.8),replace=FALSE)
+  dfopt<-imaging_splsda[nsamp,]
+  dfho<-imaging_splsda[-nsamp,]
+  confounds_opt<-dfopt[,c(110,112)]
+  confounds_ho<-dfho[,c(110,112)]
+  for ( i in cov) {
+    x<-scale(dfopt[,i])
+    dfopt[,i]<-scale(dfopt[,i])
+    dfho[,i]<-(dfho[,i]-attr(x,"scaled:center"))/attr(x,"scaled:scale")
+  }
+  
+  for (i in cov) {
+    lmfit<- lm(dfopt[, i] ~ as.matrix(confounds_opt),data = imaging_splsda
+    )
+    dfopt[, i] <-resid(lmfit)
+    dfho[, i] <- dfho[, i]-as.matrix(confounds_ho)%*%lmfit$coefficients[-1]
+  }
+  
+  Y<-as.factor(as.matrix(dfopt$diagnosis1))
+  X<-as.matrix(dfopt[,cov])
+  tunsplsda<-tune.splsda(X, Y,
+                         ncomp = 5,
+                         test.keepX=test.keepX,
+                         validation = "Mfold",
+                         folds = 5,nrepeat=50,cpus=4)
+  
+  
+  res <-mixOmics:: splsda(X, Y, ncomp = tunsplsda$choice.ncomp$ncomp, 
+                          keepX = tunsplsda$choice.keepX[1:tunsplsda$choice.ncomp$ncomp]
+                          ,scale=T)
+  optsample[[hosets]]<-nsamp
+  ncompsample[[hosets]]<-tunsplsda$choice.ncomp$ncomp
+  keepsampleX[[hosets]]<-tunsplsda$choice.keepX
+  list<-list()
+  Yho<-as.factor(as.matrix(dfho$diagnosis1))
+  X<-as.matrix(dfho[,cov])
+  x<-auroc(res,X,Yho,plot=F)
+  truer2<-unlist(x)[length(unlist(x))-1]
+  
+  permr2test<-c()
+  for (nperm in 1: 10000) {
+    perm<-sample(nrow(dfopt),size=nrow(dfopt),replace=FALSE)
+    Y<-as.factor(as.matrix(dfopt$diagnosis1))
+    Yperm<-Y[perm]
+    X<-as.matrix(dfopt[,cov])
+    res <-mixOmics:: splsda(X, Yperm, ncomp = tunsplsda$choice.ncomp$ncomp, 
+                            keepX = tunsplsda$choice.keepX[1:tunsplsda$choice.ncomp$ncomp]
+                            ,scale=T)
+    Yho<-as.factor(as.matrix(dfho$diagnosis1))
+    X<-as.matrix(dfho[,cov])
+    x<-auroc(res,X,Yho,plot=F)
+    permr2test[nperm]<-unlist(x)[length(unlist(x))-1]
+    
+  }
+  
+  pval_test_this <-
+    length(which (permr2test >= 
+                    truer2)) / 10000
+  pval_test_imag[[hosets]]<-pval_test_this
+  
+  
+}
+
+
+
+
+
+####Separateing HYDRA clusters based on clinical characterisics
+
+hydra_splsda<-x[x$Two!=-1,]
+set.seed(123)
+pval_test_hydra<-list()
+iter=0
+cov=c(110,115:134,136:152,154:164,166:176)
+optsample<-list()
+ncompsample<-list()
+keepsampleX<-list()
+test.keepX = ceiling( seq(1,ncol(hydra_splsda[,c(cov)]),length.out=20))
+hydra_splsda[,c(cov)]<-sapply(hydra_splsda[,c(cov)],as.character)
+hydra_splsda[,c(cov)]<-sapply(hydra_splsda[,c(cov)],as.numeric)
+for ( hosets in 1:10) {
+  nsamp<-sample(nrow(hydra_splsda),size=ceiling(nrow(hydra_splsda)*0.8),replace=FALSE)
+  dfopt<-hydra_splsda[nsamp,]
+  dfho<-hydra_splsda[-nsamp,]
+  Y<-as.factor(as.matrix(dfopt$Two))
+  X<-as.matrix(dfopt[,c(cov)])
+  tunsplsda<-tune.splsda(X, Y,
+                         ncomp = 5,
+                         test.keepX=test.keepX,
+                         validation = "Mfold",
+                         folds = 5,nrepeat=50,cpus=4)
+  
+  
+  res <-mixOmics:: splsda(X, Y, ncomp = tunsplsda$choice.ncomp$ncomp, 
+                          keepX = tunsplsda$choice.keepX[1:tunsplsda$choice.ncomp$ncomp]
+                          ,scale=T)
+  optsample[[hosets]]<-nsamp
+  ncompsample[[hosets]]<-tunsplsda$choice.ncomp$ncomp
+  keepsampleX[[hosets]]<-tunsplsda$choice.keepX
+  list<-list()
+  Yho<-as.factor(as.matrix(dfho$Two))
+  X<-as.matrix(dfho[,c(cov)])
+  x<-auroc(res,X,Yho,plot=F)
+  truer2<-unlist(x)[length(unlist(x))-1]
+  
+  permr2test<-c()
+  for (nperm in 1: 10000) {
+    perm<-sample(nrow(dfopt),size=nrow(dfopt),replace=FALSE)
+    Y<-as.factor(as.matrix(dfopt$Two))
+    Yperm<-Y[perm]
+    X<-as.matrix(dfopt[,c(cov)])
+    res <-mixOmics:: splsda(X, Yperm, ncomp = tunsplsda$choice.ncomp$ncomp, 
+                            keepX = tunsplsda$choice.keepX[1:tunsplsda$choice.ncomp$ncomp]
+                            ,scale=T)
+    Yho<-as.factor(as.matrix(dfho$Two))
+    X<-as.matrix(dfho[,c(cov)])
+    x<-auroc(res,X,Yho,plot=F)
+    permr2test[nperm]<-unlist(x)[length(unlist(x))-1]
+    
+  }
+  
+  pval_test_this <-
+    length(which (permr2test >= 
+                    truer2)) / 10000
+  pval_test_hydra[[hosets]]<-pval_test_this
+  
+  
+}
+View(t(unlist(pval_test_hydra)))
+
+
+
+
+
+
+
+
+
+
